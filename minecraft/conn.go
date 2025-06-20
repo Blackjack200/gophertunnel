@@ -36,12 +36,7 @@ type exemptedResourcePack struct {
 
 // exemptedPacks is a list of all resource packs that do not need to be downloaded, but may always be applied
 // in the ResourcePackStack packet.
-var exemptedPacks = []exemptedResourcePack{
-	{
-		uuid:    "0fba4063-dba1-4281-9b89-ff9390653530",
-		version: "1.0.0",
-	},
-}
+var exemptedPacks []exemptedResourcePack
 
 // Conn represents a Minecraft (Bedrock Edition) connection over a specific net.Conn transport layer. Its
 // methods (Read, Write etc.) are safe to be called from multiple goroutines simultaneously, but ReadPacket
@@ -752,9 +747,7 @@ func (conn *Conn) handleLogin(pk *packet.Login) error {
 		_ = conn.WritePacket(&packet.Disconnect{Message: text.Colourf("<red>You must be logged in with XBOX Live to join.</red>")})
 		return fmt.Errorf("client was not authenticated to XBOX Live")
 	}
-	if err := conn.enableEncryption(authResult.PublicKey); err != nil {
-		return fmt.Errorf("enable encryption: %w", err)
-	}
+	conn.handleClientToServerHandshake()
 	return nil
 }
 
