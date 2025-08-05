@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -324,9 +323,6 @@ func (data ClientData) Validate() error {
 	}
 	if _, err := uuid.Parse(data.SelfSignedID); err != nil {
 		return fmt.Errorf("SelfSignedID must be parseable as a valid UUID, but got %v", data.SelfSignedID)
-	}
-	if _, err := net.ResolveUDPAddr("udp", data.ServerAddress); err != nil {
-		return fmt.Errorf("ServerAddress must be resolveable as a UDP address, but got %v", data.ServerAddress)
 	}
 	if err := base64DecLength(data.SkinData, data.SkinImageHeight*data.SkinImageWidth*4); err != nil {
 		return fmt.Errorf("SkinData is invalid: %w", err)
