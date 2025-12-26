@@ -228,6 +228,9 @@ const (
 	IDPlayerUpdateEntityOverrides
 	IDPlayerLocation
 	IDClientBoundControlSchemeSet
-	IDServerScriptDebugDrawer
+	IDDebugDrawer
 	IDServerBoundPackSettingChange
+	_ // TODO: Implement client-bound data store
+	IDGraphicsOverrideParameter
+	_ // TODO: Implement server-bound data store
 )
