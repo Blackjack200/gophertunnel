@@ -240,7 +240,6 @@ func (r *Reader) NBT(m *map[string]any, encoding nbt.Encoding) {
 	dec := nbt.NewDecoderWithEncoding(r.r, encoding)
 	dec.AllowZero = true
 
-	*m = make(map[string]any)
 	if err := dec.Decode(m); err != nil {
 		r.panic(err)
 	}
@@ -255,19 +254,20 @@ func (r *Reader) NBTList(m *[]any, encoding nbt.Encoding) {
 
 // UUID reads a uuid.UUID from the underlying buffer.
 func (r *Reader) UUID(x *uuid.UUID) {
-	b := make([]byte, 16)
-	if _, err := r.r.Read(b); err != nil {
+	var b [16]byte
+	if _, err := io.ReadFull(r.r, b[:]); err != nil {
 		r.panic(err)
 	}
 
 	// The UUIDs we read are Little Endian, but the uuid library is based on Big Endian UUIDs, so we need to
-	// reverse the two int64s the UUID is composed of, then reverse their bytes too.
-	b = append(b[8:], b[:8]...)
-	var arr [16]byte
-	for i, j := 0, 15; i < j; i, j = i+1, j-1 {
-		arr[i], arr[j] = b[j], b[i]
+	// reverse the bytes of the two int64s the UUID is composed of.
+	for i, j := 0, 7; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
 	}
-	*x = arr
+	for i, j := 8, 15; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	*x = b
 }
 
 // PlayerInventoryAction reads a PlayerInventoryAction.
@@ -422,12 +422,12 @@ func (r *Reader) ItemDescriptorCount(i *ItemDescriptorCount) {
 // ItemInstance reads an ItemInstance i from the underlying buffer.
 func (r *Reader) ItemInstance(i *ItemInstance) {
 	x := &i.Stack
-	x.NBTData = make(map[string]any)
 	r.Varint32(&x.NetworkID)
 	if x.NetworkID == 0 {
 		// The item was air, so there is no more data we should read for the item instance. After all, air
 		// items aren't really anything.
-		x.MetadataValue, x.Count, x.CanBePlacedOn, x.CanBreak = 0, 0, nil, nil
+		x.MetadataValue, x.Count, x.BlockRuntimeID, i.StackNetworkID = 0, 0, 0, 0
+		x.NBTData, x.CanBePlacedOn, x.CanBreak = nil, nil, nil
 		return
 	}
 
@@ -439,6 +439,8 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 
 	if hasNetID {
 		r.Varint32(&i.StackNetworkID)
+	} else {
+		i.StackNetworkID = 0
 	}
 
 	r.Varint32(&x.BlockRuntimeID)
@@ -465,6 +467,8 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 		}
 	} else if length > 0 {
 		bufReader.NBT(&x.NBTData, nbt.LittleEndian)
+	} else {
+		x.NBTData = nil
 	}
 
 	FuncSliceUint32Length(bufReader, &x.CanBePlacedOn, bufReader.StringUTF)
@@ -478,12 +482,12 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 
 // Item reads an ItemStack x from the underlying buffer.
 func (r *Reader) Item(x *ItemStack) {
-	x.NBTData = make(map[string]any)
 	r.Varint32(&x.NetworkID)
 	if x.NetworkID == 0 {
 		// The item was air, so there is no more data we should read for the item instance. After all, air
 		// items aren't really anything.
-		x.MetadataValue, x.Count, x.CanBePlacedOn, x.CanBreak = 0, 0, nil, nil
+		x.MetadataValue, x.Count, x.BlockRuntimeID = 0, 0, 0
+		x.NBTData, x.CanBePlacedOn, x.CanBreak = nil, nil, nil
 		return
 	}
 
@@ -513,6 +517,8 @@ func (r *Reader) Item(x *ItemStack) {
 		}
 	} else if length > 0 {
 		bufReader.NBT(&x.NBTData, nbt.LittleEndian)
+	} else {
+		x.NBTData = nil
 	}
 
 	FuncSliceUint32Length(bufReader, &x.CanBePlacedOn, bufReader.StringUTF)
@@ -567,7 +573,7 @@ func (r *Reader) EventType(x *Event) {
 func (r *Reader) EventOrdinal(x *Event) {
 	var ordinal uint32
 	if !lookupEventOrdinal(*x, &ordinal) {
-		r.UnknownEnumOption(fmt.Sprintf("%T", x), "event packet event ordinal")
+		r.UnknownEnumOption(*x, "event packet event ordinal")
 		return
 	}
 	r.Varuint32(&ordinal)
@@ -653,24 +659,6 @@ func (r *Reader) ShapeData(x *ShapeData) {
 	(*x).Marshal(r)
 }
 
-// StringConst reads a string from the reader and matches its length against x.
-func (r *Reader) StringConst(x string) {
-	var length uint32
-	r.Varuint32(&length)
-	l := int(length)
-	if l != len(x) {
-		r.panicf("expected string with a length of %x, got %v", len(x), l)
-	}
-	data := make([]byte, l)
-	if _, err := r.r.Read(data); err != nil {
-		r.panic(err)
-	}
-	input := *(*string)(unsafe.Pointer(&data))
-	if input != x {
-		r.panicf("expected string to be %x, got %v", x, input)
-	}
-}
-
 // SliceLimit checks if the value passed is lower than the limit passed. If
 // not, the Reader panics.
 func (r *Reader) SliceLimit(value uint32, max uint32) {
@@ -686,7 +674,7 @@ func (r *Reader) ShieldID() int32 {
 
 // UnknownEnumOption panics with an unknown enum option error.
 func (r *Reader) UnknownEnumOption(value any, enum string) {
-	r.panicf("unknown value '%v' for enum type '%v'", value, enum)
+	r.panicf("unknown value '%#v' for enum type '%v'", value, enum)
 }
 
 // InvalidValue panics with an error indicating that the value passed is not valid for a specific field.
