@@ -6,6 +6,7 @@ import (
 	"github.com/go-gl/mathgl/mgl32"
 	"github.com/google/uuid"
 	"github.com/sandertv/gophertunnel/minecraft/nbt"
+	"golang.org/x/exp/constraints"
 )
 
 // IO represents a packet IO direction. Implementations of this interface are Reader and Writer. Reader reads
@@ -20,6 +21,7 @@ type IO interface {
 	Uint64(x *uint64)
 	Int64(x *int64)
 	Float32(x *float32)
+	Float64(x *float64)
 	Uint8(x *uint8)
 	Int8(x *int8)
 	Bool(x *bool)
@@ -33,7 +35,6 @@ type IO interface {
 	Vec3(x *mgl32.Vec3)
 	Vec2(x *mgl32.Vec2)
 	BlockPos(x *BlockPos)
-	UBlockPos(x *BlockPos)
 	ChunkPos(x *ChunkPos)
 	SubChunkPos(x *SubChunkPos)
 	SoundPos(x *mgl32.Vec3)
@@ -47,9 +48,10 @@ type IO interface {
 	ARGB(x *color.RGBA)
 	BEARGB(x *color.RGBA)
 	VarRGBA(x *color.RGBA)
-	EntityMetadata(x *map[uint32]any)
+	EntityMetadata(x *EntityMetadata)
 	Item(x *ItemStack)
 	ItemInstance(i *ItemInstance)
+	ItemInstanceNew(i *ItemInstance)
 	ItemDescriptorCount(i *ItemDescriptorCount)
 	StackRequestAction(x *StackRequestAction)
 	MaterialReducer(x *MaterialReducer)
@@ -151,7 +153,7 @@ const maxSliceLength = 1024
 func SliceOfLen[T any, S ~*[]T, A PtrMarshaler[T]](r IO, l uint32, x S) {
 	limit, ok := r.(sliceReader)
 	if ok {
-		limit.SliceLimit(l, maxSliceLength)
+		limit.SliceLength(l, maxSliceLength)
 		*x = make([]T, l)
 	}
 
@@ -164,7 +166,7 @@ func SliceOfLen[T any, S ~*[]T, A PtrMarshaler[T]](r IO, l uint32, x S) {
 func FuncSliceOfLen[T any, S ~*[]T](r IO, l uint32, x S, f func(*T)) {
 	limit, ok := r.(sliceReader)
 	if ok {
-		limit.SliceLimit(l, maxSliceLength)
+		limit.SliceLength(l, maxSliceLength)
 		*x = make([]T, l)
 	}
 
@@ -174,7 +176,7 @@ func FuncSliceOfLen[T any, S ~*[]T](r IO, l uint32, x S, f func(*T)) {
 }
 
 type sliceReader interface {
-	SliceLimit(value uint32, max uint32)
+	SliceLength(value uint32, max uint32)
 }
 
 // FuncIOSliceOfLen reads/writes the elements of a slice of type T with length l using func f.
@@ -193,6 +195,13 @@ type PtrMarshaler[T any] interface {
 // Single reads/writes a single Marshaler x.
 func Single[T any, S PtrMarshaler[T]](r IO, x S) {
 	x.Marshal(r)
+}
+
+// IntegerFunc reads/writes a value of type S using f, converting between S and the wire type W.
+func IntegerFunc[S, W constraints.Integer](x *S, f func(*W)) {
+	w := W(*x)
+	f(&w)
+	*x = S(w)
 }
 
 // Optional is an optional type in the protocol. If not set, only a false bool is written. If set, a true bool is

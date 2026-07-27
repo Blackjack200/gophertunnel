@@ -13,6 +13,14 @@ const (
 )
 
 const (
+	XBLBroadcastModeNoMultiPlay = iota
+	XBLBroadcastModeInviteOnly
+	XBLBroadcastModeFriendsOnly
+	XBLBroadcastModeFriendsOfFriends
+	XBLBroadcastModePublic
+)
+
+const (
 	ChatRestrictionLevelNone     = 0
 	ChatRestrictionLevelDropped  = 1
 	ChatRestrictionLevelDisabled = 2
@@ -90,6 +98,11 @@ type StartGame struct {
 	// ExportedFromEditor is a value to dictate if the world was exported from editor mode. The functionality of this
 	// field is currently unknown.
 	ExportedFromEditor bool
+	// ServerEditorConnectionPolicy controls the editor connection policy.
+	ServerEditorConnectionPolicy int32
+	// AllowAnonymousBlockDropsInEditorWorlds specifies if anonymous block
+	// drops are allowed in hybrid editor worlds.
+	AllowAnonymousBlockDropsInEditorWorlds bool
 	// DayCycleLockTime is the time at which the day cycle was locked if the day cycle is disabled using the
 	// respective game rule. The client will maintain this time as long as the day cycle is disabled.
 	DayCycleLockTime int32
@@ -116,7 +129,10 @@ type StartGame struct {
 	MultiPlayerGame bool
 	// LANBroadcastEnabled specifies if LAN broadcast was intended to be enabled for the world.
 	LANBroadcastEnabled bool
-	// XBLBroadcastMode is the mode used to broadcast the joined game across XBOX Live.
+	// XBLBroadcastMode is the mode used to broadcast the joined game across Xbox Live.
+	// When set to 0, the 'Invite' button in the pause screen is grayed out and players
+	// cannot invite their friends to the Xbox Live multiplayer session they're currently in.
+	// It only applies to worlds and has no effect on external servers.
 	XBLBroadcastMode int32
 	// PlatformBroadcastMode is the mode used to broadcast the joined game across the platform.
 	PlatformBroadcastMode int32
@@ -189,9 +205,9 @@ type StartGame struct {
 	NewNether bool
 	// EducationSharedResourceURI is an education edition feature that transmits education resource settings to clients.
 	EducationSharedResourceURI protocol.EducationSharedResourceURI
-	// ForceExperimentalGameplay specifies if experimental gameplay should be force enabled. For servers this
-	// should always be set to false.
-	ForceExperimentalGameplay bool
+	// ForceExperimentalGameplay specifies if experimental gameplay should be force enabled/disabled. For servers this
+	// should always be empty.
+	ForceExperimentalGameplay protocol.Optional[bool]
 	// LevelID is a base64 encoded world ID that is used to identify the world.
 	LevelID string
 	// WorldName is the name of the world that the player is joining. Note that this field shows up above the
@@ -245,6 +261,9 @@ type StartGame struct {
 	UseBlockNetworkIDHashes bool
 	// ServerAuthoritativeSound is currently unknown as to what it does.
 	ServerAuthoritativeSound bool
+	// IsLoggingChat indicates that the server owner is logging chat messages
+	// on the server machine. Education Edition only.
+	IsLoggingChat bool
 	// ServerJoinInformation contains optional information about the server the player is joining.
 	ServerJoinInformation protocol.Optional[protocol.ServerJoinInformation]
 	// ServerID is the server identifier for telemetry.
@@ -277,7 +296,7 @@ func (pk *StartGame) Marshal(io protocol.IO) {
 	io.Varint32(&pk.WorldGameMode)
 	io.Bool(&pk.Hardcore)
 	io.Varint32(&pk.Difficulty)
-	io.UBlockPos(&pk.WorldSpawn)
+	io.BlockPos(&pk.WorldSpawn)
 	io.Bool(&pk.AchievementsDisabled)
 	io.Varint32(&pk.EditorWorldType)
 	io.Bool(&pk.CreatedInEditor)
@@ -317,9 +336,11 @@ func (pk *StartGame) Marshal(io protocol.IO) {
 	io.Int32(&pk.LimitedWorldDepth)
 	io.Bool(&pk.NewNether)
 	protocol.Single(io, &pk.EducationSharedResourceURI)
-	io.Bool(&pk.ForceExperimentalGameplay)
+	protocol.OptionalFunc(io, &pk.ForceExperimentalGameplay, io.Bool)
 	io.Uint8(&pk.ChatRestrictionLevel)
 	io.Bool(&pk.DisablePlayerInteractions)
+	io.Varint32(&pk.ServerEditorConnectionPolicy)
+	io.Bool(&pk.AllowAnonymousBlockDropsInEditorWorlds)
 	io.String(&pk.LevelID)
 	io.String(&pk.WorldName)
 	io.String(&pk.TemplateContentIdentity)
@@ -337,6 +358,7 @@ func (pk *StartGame) Marshal(io protocol.IO) {
 	io.Bool(&pk.ClientSideGeneration)
 	io.Bool(&pk.UseBlockNetworkIDHashes)
 	io.Bool(&pk.ServerAuthoritativeSound)
+	io.Bool(&pk.IsLoggingChat)
 	protocol.OptionalMarshaler(io, &pk.ServerJoinInformation)
 	io.String(&pk.ServerID)
 	io.String(&pk.ScenarioID)

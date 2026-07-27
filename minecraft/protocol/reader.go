@@ -26,6 +26,7 @@ type Reader struct {
 	}
 	shieldID      int32
 	limitsEnabled bool
+	buf           [8]byte
 }
 
 // NewReader creates a new Reader using the io.ByteReader passed as underlying source to read bytes from.
@@ -72,6 +73,7 @@ func (r *Reader) StringUTF(x *string) {
 	if l > math.MaxInt16 {
 		r.panic(errStringTooLong)
 	}
+	r.checkRemaining(l, "string")
 	data := make([]byte, l)
 	if _, err := r.r.Read(data); err != nil {
 		r.panic(err)
@@ -87,6 +89,7 @@ func (r *Reader) String(x *string) {
 	if l > math.MaxInt32 {
 		r.panic(errStringTooLong)
 	}
+	r.checkRemaining(l, "string")
 	data := make([]byte, l)
 	if _, err := r.r.Read(data); err != nil {
 		r.panic(err)
@@ -102,6 +105,7 @@ func (r *Reader) ByteSlice(x *[]byte) {
 	if l > math.MaxInt32 {
 		r.panic(errStringTooLong)
 	}
+	r.checkRemaining(l, "byte slice")
 	data := make([]byte, l)
 	if _, err := r.r.Read(data); err != nil {
 		r.panic(err)
@@ -129,15 +133,6 @@ func (r *Reader) BlockPos(x *BlockPos) {
 	r.Varint32(&x[2])
 }
 
-// UBlockPos reads three varint32s, one unsigned for the y, into a BlockPos from the underlying buffer.
-func (r *Reader) UBlockPos(x *BlockPos) {
-	r.Varint32(&x[0])
-	var y uint32
-	r.Varuint32(&y)
-	x[1] = int32(y)
-	r.Varint32(&x[2])
-}
-
 // ChunkPos writes a ChunkPos as 2 varint32s to the underlying buffer.
 func (r *Reader) ChunkPos(x *ChunkPos) {
 	r.Varint32(&x[0])
@@ -154,7 +149,7 @@ func (r *Reader) SubChunkPos(x *SubChunkPos) {
 // SoundPos reads an mgl32.Vec3 that serves as a position for a sound.
 func (r *Reader) SoundPos(x *mgl32.Vec3) {
 	var b BlockPos
-	r.UBlockPos(&b)
+	r.BlockPos(&b)
 	*x = mgl32.Vec3{float32(b[0]) / 8, float32(b[1]) / 8, float32(b[2]) / 8}
 }
 
@@ -276,17 +271,33 @@ func (r *Reader) PlayerInventoryAction(x *UseItemTransactionData) {
 	if x.LegacyRequestID < -1 && (x.LegacyRequestID&1) == 0 {
 		Slice(r, &x.LegacySetItemSlots)
 	}
-	Slice(r, &x.Actions)
+	FuncSlice(r, &x.Actions, r.inventoryActionOld)
 	r.Varuint32(&x.ActionType)
 	r.Varuint32(&x.TriggerType)
-	r.UBlockPos(&x.BlockPosition)
+	r.BlockPos(&x.BlockPosition)
 	r.Varint32(&x.BlockFace)
 	r.Varint32(&x.HotBarSlot)
 	r.ItemInstance(&x.HeldItem)
 	r.Vec3(&x.Position)
 	r.Vec3(&x.ClickedPosition)
 	r.Varuint32(&x.BlockRuntimeID)
-	r.Varuint32(&x.ClientPrediction)
+	r.Uint8(&x.ClientPrediction)
+	r.Uint8(&x.ClientCooldownState)
+}
+
+func (r *Reader) inventoryActionOld(x *InventoryAction) {
+	r.Varuint32(&x.SourceType)
+	switch x.SourceType {
+	case InventoryActionSourceContainer, InventoryActionSourceTODO:
+		var windowID int32
+		r.Varint32(&windowID)
+		x.WindowID = int8(windowID)
+	case InventoryActionSourceWorld:
+		r.Varuint32(&x.SourceFlags)
+	}
+	r.Varuint32(&x.InventorySlot)
+	r.ItemInstance(&x.OldItem)
+	r.ItemInstance(&x.NewItem)
 }
 
 // GameRule reads a GameRule x from the Reader.
@@ -340,8 +351,8 @@ func (r *Reader) GameRuleLegacy(x *GameRule) {
 }
 
 // EntityMetadata reads an entity metadata map from the underlying buffer into map x.
-func (r *Reader) EntityMetadata(x *map[uint32]any) {
-	*x = map[uint32]any{}
+func (r *Reader) EntityMetadata(x *EntityMetadata) {
+	*x = EntityMetadata{}
 
 	var count uint32
 	r.Varuint32(&count)
@@ -475,8 +486,75 @@ func (r *Reader) ItemInstance(i *ItemInstance) {
 	FuncSliceUint32Length(bufReader, &x.CanBreak, bufReader.StringUTF)
 
 	if x.NetworkID == bufReader.shieldID {
-		var blockingTick int64
-		bufReader.Int64(&blockingTick)
+		bufReader.Int64(&x.BlockingTick)
+	}
+}
+
+// ItemInstanceNew reads an ItemInstance i from the underlying buffer in the new format.
+func (r *Reader) ItemInstanceNew(i *ItemInstance) {
+	x := &i.Stack
+	var id int16
+	r.Int16(&id)
+	x.NetworkID = int32(id)
+
+	r.Uint16(&x.Count)
+	r.Varuint32(&x.MetadataValue)
+
+	var hasNetID bool
+	r.Bool(&hasNetID)
+
+	if hasNetID {
+		var empty uint32
+		r.Varuint32(&empty)
+		r.Varint32(&i.StackNetworkID)
+	} else {
+		i.StackNetworkID = 0
+	}
+
+	var runtimeID uint32
+	r.Varuint32(&runtimeID)
+	x.BlockRuntimeID = int32(runtimeID)
+
+	var extraData []byte
+	r.ByteSlice(&extraData)
+
+	if len(extraData) == 0 {
+		x.NBTData, x.CanBePlacedOn, x.CanBreak = nil, nil, nil
+		x.BlockingTick = 0
+		return
+	}
+
+	buf := bytes.NewBuffer(extraData)
+	bufReader := NewReader(buf, r.shieldID, r.limitsEnabled)
+
+	var length int16
+	bufReader.Int16(&length)
+
+	switch length {
+	case 0:
+		x.NBTData = nil
+	case -1:
+		var version uint8
+		bufReader.Uint8(&version)
+
+		switch version {
+		case 1:
+			bufReader.NBT(&x.NBTData, nbt.LittleEndian)
+		default:
+			bufReader.UnknownEnumOption(version, "item user data version")
+			return
+		}
+	default:
+		bufReader.NBT(&x.NBTData, nbt.LittleEndian)
+	}
+
+	FuncSliceUint32Length(bufReader, &x.CanBePlacedOn, bufReader.StringUTF)
+	FuncSliceUint32Length(bufReader, &x.CanBreak, bufReader.StringUTF)
+
+	if x.NetworkID == bufReader.shieldID {
+		bufReader.Int64(&x.BlockingTick)
+	} else {
+		x.BlockingTick = 0
 	}
 }
 
@@ -525,8 +603,7 @@ func (r *Reader) Item(x *ItemStack) {
 	FuncSliceUint32Length(bufReader, &x.CanBreak, bufReader.StringUTF)
 
 	if x.NetworkID == bufReader.shieldID {
-		var blockingTick int64
-		bufReader.Int64(&blockingTick)
+		bufReader.Int64(&x.BlockingTick)
 	}
 }
 
@@ -659,11 +736,23 @@ func (r *Reader) ShapeData(x *ShapeData) {
 	(*x).Marshal(r)
 }
 
-// SliceLimit checks if the value passed is lower than the limit passed. If
-// not, the Reader panics.
-func (r *Reader) SliceLimit(value uint32, max uint32) {
+// SliceLength validates a length prefix before a slice is allocated.
+func (r *Reader) SliceLength(value uint32, max uint32) {
 	if value > max && r.limitsEnabled {
 		r.panicf("slice length was too long: length of %v (max %v)", value, max)
+	}
+	if remaining, ok := r.r.(interface{ Len() int }); ok && uint64(value) > uint64(remaining.Len()) {
+		r.panicf("slice length %v exceeds remaining packet payload %v", value, remaining.Len())
+	}
+}
+
+// checkRemaining checks that a field's declared length fits within the remaining packet payload.
+func (r *Reader) checkRemaining(length int, field string) {
+	if length < 0 {
+		r.panicf("%s length was negative: %v", field, length)
+	}
+	if remaining, ok := r.r.(interface{ Len() int }); ok && length > remaining.Len() {
+		r.panicf("%s length %v exceeds remaining packet payload %v", field, length, remaining.Len())
 	}
 }
 

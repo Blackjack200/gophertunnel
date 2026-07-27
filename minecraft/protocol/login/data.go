@@ -138,8 +138,12 @@ type ClientData struct {
 	// GUIScale is the GUI scale of the player. It is by default 0, and is otherwise -1 or -2 for a smaller
 	// GUI scale than usual.
 	GUIScale int `json:"GuiScale"`
-	// IsEditorMode is a value to dictate if the player is in editor mode.
-	IsEditorMode bool
+	// FilterProfanity indicates if the client has profanity filtering enabled.
+	FilterProfanity bool
+	// ClientEditorConnectionIntent indicates how the client intends to connect to an editor world.
+	ClientEditorConnectionIntent int
+	// ClientIsEditorCapable specifies if the client supports editor features.
+	ClientIsEditorCapable bool
 	// LanguageCode is the language code of the player. It looks like 'en_UK'. It follows the ISO language
 	// codes, but hyphens ('-') are replaced with underscores. ('_')
 	LanguageCode string
@@ -227,20 +231,23 @@ type ClientData struct {
 	CompatibleWithClientSideChunkGen bool
 	// MaxViewDistance is the highest render distance that the client's hardware can handle.
 	MaxViewDistance int
-	// MemoryTier is the tier of memory that the client's hardware has. This is a number between 0 and 5. The
+	// MemoryTier is the tier of memory that the client's hardware has. This is a number between 0 and 4. The
 	// full calculation of this tier is currently unknown but the following is a rough estimate from a
 	// developer at Mojang:
-	// 0 - Undetermined
-	// 1 - Super Low, less than ~1.5GB of memory
-	// 2 - Low, less than ~2GB of memory
-	// 3 - Mid, less than ~4GB of memory
-	// 4 - High, less than ~8GB of memory
-	// 5 - Super High, more than ~8GB of memory
+	// 0 - Super Low, less than ~1.5GB of memory
+	// 1 - Low, less than ~2GB of memory
+	// 2 - Mid, less than ~4GB of memory
+	// 3 - High, less than ~8GB of memory
+	// 4 - Super High, more than ~8GB of memory
 	MemoryTier int
 	// PlatformType is the type of platform the client is running.
 	PlatformType int
 	// GraphicsMode is the graphics mode the client is running.
 	GraphicsMode int
+	// PartyID is the identifier of the client's party, or empty if they are not in a party.
+	PartyID string `json:"PartyId"`
+	// PartyLeader is if the client is the leader of the party they are in.
+	PartyLeader bool `json:"IsPartyLeader"`
 }
 
 // PersonaPiece represents a piece of a persona skin. All pieces are sent separately.
